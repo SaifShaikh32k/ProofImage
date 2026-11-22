@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Entry</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#6b7280; --line:#e3e6ea; --brand:#2563eb; --ok:#16a34a; --err:#dc2626; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 8px 0 4px; }
+  p.sub { margin: 0 0 20px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 16px; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .full { grid-column: 1 / -1; }
+  label { display:block; font-size: .85rem; color: var(--muted); margin-bottom: 6px; }
+  label b { color: var(--err); }
+  input[type=text], input[type=number], textarea { width:100%; padding: 10px 12px; border:1px solid var(--line); border-radius: 10px; font: inherit; font-size: 1rem; background:#fff; }
+  textarea { min-height: 72px; resize: vertical; }
+  input:focus, textarea:focus { outline: 2px solid #bfd3ff; border-color: var(--brand); }
+  .drop { border: 2px dashed #b8c2d0; border-radius: 14px; padding: 28px 16px; text-align:center; cursor:pointer; background:#fbfcfe; transition: .15s; }
+  .drop.over { border-color: var(--brand); background:#eef4ff; }
+  .drop strong { display:block; font-size:1.05rem; margin-bottom:4px; }
+  .drop span { color: var(--muted); font-size:.9rem; }
+  button { font: inherit; border:0; border-radius: 10px; padding: 12px 18px; cursor:pointer; }
+  .primary { background: var(--brand); color:#fff; width:100%; font-weight:600; }
+  .primary:disabled { opacity:.5; cursor:not-allowed; }
+  .item { display:flex; gap:12px; align-items:center; padding: 10px 0; border-bottom:1px solid var(--line); }
+  .item:last-child { border-bottom:0; }
+  .thumb { width:52px; height:52px; border-radius:8px; object-fit:cover; background:#e5e7eb; flex:none; }
+  .meta { flex:1; min-width:0; }
+  .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:.95rem; }
+  .status { font-size:.82rem; color: var(--muted); }
+  .status.ok { color: var(--ok); } .status.err { color: var(--err); }
+  .rm { background:transparent; color:var(--muted); padding:6px 8px; font-size:.85rem; }
+  .note { font-size:.8rem; color:var(--muted); margin-top:8px; }
+  #msg { margin-top:12px; font-size:.92rem; color: var(--err); min-height: 1.2em; }
+  #done { text-align:center; }
+  #done h2 { margin: 4px 0 6px; color: var(--ok); }
+  .secondary { background:#eef2f7; color: var(--ink); width:100%; margin-top: 12px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Photo entry</h1>
+  <p class="sub">Fill in the details and attach photos. Photos are sent in full original quality — no login needed.</p>
+
+  <div id="formView">
+    <div class="card">
+      <div id="codeRow" hidden style="margin-bottom:12px">
+        <label for="code">Access code <b>*</b></label>
+        <input type="text" id="code" autocomplete="off">
+      </div>
+      <div class="grid">
+        <div>
+          <label for="wid">WID <b>*</b></label>
+          <input type="text" id="wid" autocomplete="off" autocapitalize="characters">
+        </div>
+        <div>
+          <label for="qty">Qty <b>*</b></label>
+          <input type="number" id="qty" min="0" step="1" inputmode="numeric">
+        </div>
+        <div>
+          <label for="location">Location <b>*</b></label>
+          <input type="text" id="location" autocomplete="off" autocapitalize="characters">
+        </div>
+        <div>
+          <label for="tlId">TL ID <b>*</b></label>
+          <input type="text" id="tlId" autocomplete="off" autocapitalize="characters">
+        </div>
+        <div class="full">
+          <label for="remark">Remark</label>
+          <textarea id="remark" maxlength="500"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <label>Photos <b>*</b></label>
+      <div class="drop" id="drop">
+        <strong>Tap to choose photos</strong>
+        <span>or drag &amp; drop — you can select several</span>
+      </div>
+      <input type="file" id="file" accept="image/*" multiple hidden>
+      <div id="list"></div>
+      <div class="note">Up to 10 photos, max 30 MB each.</div>
+    </div>
+
+    <button class="primary" id="go">Submit</button>
+    <div id="msg"></div>
+  </div>
+
+  <div class="card" id="done" hidden>
+    <h2>Submitted ✓</h2>
+    <div id="doneText"></div>
+    <button class="secondary" id="again">Add another entry</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  var MAX_BYTES = 30 * 1024 * 1024, MAX_PHOTOS = 10;
+  var queue = [];            // {file, url, state, el}
+  var busy = false;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var drop = $('drop'), input = $('file'), list = $('list'), go = $('go'), msg = $('msg');
+
+  google.script.run.withSuccessHandler(function (need) {
+    if (need) $('codeRow').hidden = false;
+  }).needsCode();
+
+  drop.addEventListener('click', function () { input.click(); });
+  input.addEventListener('change', function () { addFiles(input.files); input.value = ''; });
+  ['dragenter', 'dragover'].forEach(function (e) {
+    drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (e) {
+    drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (ev) { addFiles(ev.dataTransfer.files); });
+  go.addEventListener('click', submit);
+  $('again').addEventListener('click', resetForNext);
+
+  function fmt(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB'; }
+  function showMsg(t) { msg.textContent = t || ''; }
+
+  function addFiles(files) {
+    var problems = [];
+    Array.prototype.forEach.call(files, function (f) {
+      var isImg = /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp|gif|tiff?|bmp|dng|cr2|nef|arw)$/i.test(f.name);
+      if (!isImg) { problems.push(f.name + ' is not an image'); return; }
+      if (f.size > MAX_BYTES) { problems.push(f.name + ' is over 30 MB'); return; }
+      if (queue.length >= MAX_PHOTOS) { problems.push('Maximum ' + MAX_PHOTOS + ' photos'); return; }
+      var item = { file: f, url: null, state: 'ready' };
+      queue.push(item);
+      render(item);
+    });
+    showMsg(problems.join(' · '));
+  }
+
+  function render(item) {
+    var row = document.createElement('div');
+    row.className = 'item';
+    var img = document.createElement('img');
+    img.className = 'thumb';
+    if (/^image\/(jpeg|png|webp|gif|bmp)/.test(item.file.type)) {
+      img.src = URL.createObjectURL(item.file);   // preview only — the untouched original is what gets uploaded
+    }
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = '<div class="name"></div><div class="status"></div>';
+    meta.querySelector('.name').textContent = item.file.name;
+    var rm = document.createElement('button');
+    rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'Remove';
+    rm.addEventListener('click', function () {
+      if (busy) return;
+      queue = queue.filter(function (q) { return q !== item; });
+      row.remove();
+    });
+    row.appendChild(img); row.appendChild(meta); row.appendChild(rm);
+    list.appendChild(row);
+    item.el = row;
+    setStatus(item, fmt(item.file.size) + ' · ready', '');
+  }
+
+  function setStatus(item, text, cls) {
+    var s = item.el.querySelector('.status');
+    s.textContent = text; s.className = 'status ' + (cls || '');
+  }
+
+  function readBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(String(r.result).split(',')[1]); };  // raw bytes → base64; image is never re-encoded
+      r.onerror = function () { reject(new Error('Could not read file')); };
+      r.readAsDataURL(file);
+    });
+  }
+
+  function call(fn, arg) {
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (e) { reject(new Error((e && e.message) || 'Request failed')); })[fn](arg);
+    });
+  }
+
+  function val(id) { return $(id).value.trim(); }
+
+  async function submit() {
+    if (busy) return;
+    showMsg('');
+    var wid = val('wid'), loc = val('location'), qty = val('qty'), tl = val('tlId');
+    if (!wid) return showMsg('Please enter the WID.');
+    if (!loc) return showMsg('Please enter the Location.');
+    if (qty === '' || isNaN(Number(qty)) || Number(qty) < 0) return showMsg('Please enter a valid Qty.');
+    if (!tl) return showMsg('Please enter the TL ID.');
+    if (!queue.length) return showMsg('Please attach at least one photo.');
+
+    busy = true; go.disabled = true; go.textContent = 'Uploading…';
+    var code = $('code').value;
+    var failed = false;
+
+    for (var i = 0; i < queue.length; i++) {
+      var item = queue[i];
+      if (item.url) continue;                       // already uploaded on an earlier attempt — don't duplicate
+      setStatus(item, 'Uploading…', '');
+      try {
+        var data = await readBase64(item.file);
+        var res = await call('uploadPhoto', { name: item.file.name, mimeType: item.file.type, data: data, wid: wid, code: code });
+        item.url = res.url;
+        setStatus(item, 'Uploaded ✓ (original quality)', 'ok');
+      } catch (e) {
+        failed = true;
+        setStatus(item, 'Failed: ' + e.message, 'err');
+      }
+    }
+
+    if (failed) {
+      busy = false; go.disabled = false; go.textContent = 'Retry submit';
+      return showMsg('Some photos failed. Tap "Retry submit" — photos already uploaded will not be sent twice.');
+    }
+
+    go.textContent = 'Saving entry…';
+    try {
+      var out = await call('submitEntry', {
+        wid: wid, location: loc, qty: qty, tlId: tl, remark: val('remark'),
+        images: queue.map(function (q) { return q.url; }), code: code
+      });
+      $('formView').hidden = true;
+      $('done').hidden = false;
+      $('doneText').textContent = 'WID ' + wid + ' · ' + out.count + ' photo' + (out.count > 1 ? 's' : '') + ' saved.';
+    } catch (e) {
+      go.textContent = 'Retry submit';
+      showMsg('Photos are uploaded but the entry was not saved: ' + e.message + ' Tap "Retry submit".');
+    }
+    busy = false; go.disabled = false;
+  }
+
+  function resetForNext() {
+    // keep Location and TL ID (usually the same across entries); clear the rest
+    ['wid', 'qty', 'remark'].forEach(function (id) { $(id).value = ''; });
+    queue = []; list.innerHTML = '';
+    go.textContent = 'Submit'; showMsg('');
+    $('done').hidden = true; $('formView').hidden = false;
+    window.scrollTo(0, 0);
+  }
+})();
+</script>
+</body>
+</html>
